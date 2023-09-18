@@ -54,7 +54,7 @@ plot1 + plot2
 dev.off()
 
 cart <- NormalizeData(cart, normalization.method = "LogNormalize", scale.factor = 10000)
-cart <- FindVariableFeatures(cart, selection.method = "vst", nfeatures = 2000)
+cart <- FindVariableFeatures(cart, selection.method = "vst", nfeatures = 3000)
 
 # Identify the 10 most highly variable genes
 top10 <- head(VariableFeatures(cart), 10)

@@ -44,7 +44,7 @@ Then the TPM and count matrices were generated.
 exp <- filter_count51
 
 # test
-compare_t <- c( 'Day0' ,'Day3~5'）
+comp <- c("Day0", "Day3~5")
 pd1_com_t <- pd1[pd1$group1 %in% compare_t,]
 exp_com_t <- exp[,match(pd1_com_t$ID,colnames(exp))]
 Group_t <- factor(pd1_com_t$group1,
@@ -129,9 +129,8 @@ deg_deseq2_ch <- deg_all[pan,]
 
 exp <- filter_count51
 
-
 # test
-comp <- c( 'Day0' ,'Day3~5'）
+comp <- c("Day0", "Day3~5")
 pd1_com <- pd1[pd1$group1 %in% comp,]
 exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
 identical(pd1_com$ID,colnames(exp_com))
@@ -146,7 +145,6 @@ Group_ts
 design <- model.matrix(~0+Group_ts)
 colnames(design)=levels(Group_ts)
 rownames(design)=colnames(exp_com)
-library(edgeR)
 dge <- DGEList(counts=exp_com)
 dge <- calcNormFactors(dge)
 
@@ -162,7 +160,6 @@ deg_t= topTable(fit2, coef=constrasts, n=Inf)
 
 test <- as.data.frame(t(filter_fpkm51[rownames(filter_fpkm51)=="CHI3L2",pd1_com$ID]))
 test$Group_t <- Group_t
-library(ggplot2)
 ggplot(data = test,mapping = aes(x=Group_t,y=CHI3L2))+
   geom_boxplot()
 
@@ -193,7 +190,7 @@ for (i in 1:(length(id)-1)){
     design <- model.matrix(~0+Group_s)
     colnames(design)=levels(Group_s)
     rownames(design)=colnames(exp_com)
-    library(edgeR)
+
     dge <- DGEList(counts=exp_com)
     dge <- calcNormFactors(dge)
     
@@ -247,7 +244,7 @@ exp <- filter_count51
 
 
 # test
-comp <- c( 'Day0' ,'Day3~5'）
+comp <- c("Day0", "Day3~5")
 pd1_com <- pd1[pd1$group1 %in% comp,]#得到分组pd
 exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
 Group_t <- factor(pd1_com$group1,
