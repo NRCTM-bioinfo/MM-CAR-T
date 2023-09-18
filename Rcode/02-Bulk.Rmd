@@ -1,0 +1,423 @@
+
+# Bulk
+
+## Pre-processing
+
+In bulk RNA-seq analysis, Salmon was used to generate the count and transcripts per kilobase of exon model per million mapped reads (TPM) matrix. The DESeq2, limma, and edgeR packages were used to calculate differentially expressed genes (DEGs) with significance level setting as P-value < 0.05.
+
+``` {r eval = FALSE}
+
+#!/bin/bash
+#SBATCH -p CPU # partition (queue)
+#SBATCH --job-name=CART
+#SBATCH -n 8
+#SBATCH --array=1-50
+#SBATCH -t 7-00:00 # time (D-HH:MM)
+#SBATCH -o _log/mm.%N.%A_%a.out # STDOUT
+#SBATCH -e _log/mm.%N.%A_%a.err # STDERR
+#SBATCH --mail-type=END,FAIL # notifications for job done & fail
+#SBATCH --mail-user=XX # send-to address
+
+id=`sed -n ${SLURM_ARRAY_TASK_ID}p ../cart.sample.txt`
+echo "${id}"
+
+fq_path=${fq_path}
+
+fq1=${fq_path}/${id}_R1.fq.gz
+fq2=${fq_path}/${id}_R2.fq.gz
+
+gtf_file=${hg38_ref}/gencode.v37.annotation.gtf
+out_path=${hg38_ref}/salmon
+salmon_index=${hg38_ref}/gencode.v37.almon
+
+$SALMON_1_3 quant -p 40 -l IU -i ${salmon_index} -o ${out_path}/${id} -1 ${fq1} -2 ${fq2} -g ${gtf_file} --gcBias --validateMappings
+
+```
+
+Then the TPM and count matrices were generated.
+
+
+## DEGs using DESeq2
+
+``` {r eval = FALSE}
+
+exp <- filter_count51
+
+# test
+compare_t <- c( 'Day0' ,'Day3~5'）
+pd1_com_t <- pd1[pd1$group1 %in% compare_t,]
+exp_com_t <- exp[,match(pd1_com_t$ID,colnames(exp))]
+Group_t <- factor(pd1_com_t$group1,
+                  levels = compare_t) 
+
+colData <- data.frame(row.names =colnames(exp_com_t), 
+                      condition=Group_t)
+
+dds <- DESeqDataSetFromMatrix(
+  countData = exp_com_t,
+  colData = colData,
+  design = ~ condition) 
+dds <- DESeq(dds)
+
+res <- results(dds, contrast = c("condition",rev(levels(Group_t))))
+resOrdered <- res[order(res$pvalue),] 
+DEG_t <- as.data.frame(resOrdered)
+head(DEG_t)
+
+
+# calculation
+id <- unique(pd1$group1)[order(unique(pd1$group1))]#由小到大排序
+deg <- list() 
+n <- 0
+for (i in 1:(length(id)-1)){
+  for(is in ((i+1):length(id))){
+    comp <- id[c(i,is)]
+    n <- n+1
+    pd1_com <- pd1[pd1$group1 %in% comp,]
+    exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
+    Group <- factor(pd1_com$group1,
+                    levels = comp)
+
+    colData <- data.frame(row.names =colnames(exp_com), 
+                          condition=Group)
+    
+    dds <- DESeqDataSetFromMatrix(
+      countData = exp_com,
+      colData = colData, 
+      design = ~ condition) 
+    dds <- DESeq(dds)
+
+    res <- results(dds, contrast = c("condition",rev(levels(Group))))
+    resOrdered <- res[order(res$pvalue),]
+    deg[[n]] <- as.data.frame(resOrdered)
+    names(deg)[[n]] <- paste0(comp[1],"Vs",comp[2])
+    
+  }
+}
+
+tr <- c()
+clus <- list()
+gene_id <- rownames(exp)
+
+for (i in 1:length(deg)){
+  te <- data.frame(Symbol=rownames(deg[[i]]),adj.P.Val=deg[[i]]$padj)
+  colnames(te)[2] <- names(deg)[[i]]
+  clus[[i]] <- te[match(gene_id,te[,1]),]
+  names(clus)[[i]] <- names(deg)[[i]]
+  tr[i] <- identical(gene_id,clus[[i]][,1])
+}
+table(tr)
+
+deg_all <- bind_cols(clus) 
+rownames(deg_all) <- gene_id
+deg_all <- deg_all[,!str_detect(colnames(deg_all),"Symbol")]
+
+
+pan <- c()
+for (i in 1:length(rownames(deg_all))){
+  pan[i] <- sum(deg_all[i,]<0.05,na.rm = TRUE)>0
+}
+table(pan)
+deg_deseq2_ch <- deg_all[pan,]
+
+
+```
+
+## DEGs using Limma
+
+``` {r eval = FALSE}
+
+exp <- filter_count51
+
+
+# test
+comp <- c( 'Day0' ,'Day3~5'）
+pd1_com <- pd1[pd1$group1 %in% comp,]
+exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
+identical(pd1_com$ID,colnames(exp_com))
+Group_t <- factor(pd1_com$group1,
+                  levels =comp) 
+Group_t 
+Group_ts <- ifelse(pd1_com$group1==comp[1],"control","treat")
+Group_ts <- factor(Group_ts,
+                   levels = c("control","treat"))
+Group_ts 
+
+design <- model.matrix(~0+Group_ts)
+colnames(design)=levels(Group_ts)
+rownames(design)=colnames(exp_com)
+library(edgeR)
+dge <- DGEList(counts=exp_com)
+dge <- calcNormFactors(dge)
+
+v <- voom(dge,design, normalize="quantile")
+fit <- lmFit(v, design)
+
+constrasts = paste(rev(levels(Group_ts)),collapse = "-")
+cont.matrix <- makeContrasts(contrasts=constrasts,levels = design) 
+fit2=contrasts.fit(fit,cont.matrix)
+fit2=eBayes(fit2)
+
+deg_t= topTable(fit2, coef=constrasts, n=Inf)
+
+test <- as.data.frame(t(filter_fpkm51[rownames(filter_fpkm51)=="CHI3L2",pd1_com$ID]))
+test$Group_t <- Group_t
+library(ggplot2)
+ggplot(data = test,mapping = aes(x=Group_t,y=CHI3L2))+
+  geom_boxplot()
+
+
+### calculation
+id <- unique(pd1$group1)[order(unique(pd1$group1))]
+id
+deg <- list() 
+n <- 0
+for (i in 1:(length(id)-1)){
+  for(is in ((i+1):length(id))){
+    comp <- id[c(i,is)]
+    n <- n+1
+    
+    pd1_com <- pd1[pd1$group1 %in% comp,]
+    exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
+    identical(pd1_com$ID,colnames(exp_com))
+    
+    Group <- factor(pd1_com$group1,
+                    levels =comp)
+    Group 
+    
+    Group_s <- ifelse(pd1_com$group1==comp[1],"control","treat")
+    Group_s <- factor(Group_s,
+                      levels = c("control","treat"))
+    Group_s 
+
+    design <- model.matrix(~0+Group_s)
+    colnames(design)=levels(Group_s)
+    rownames(design)=colnames(exp_com)
+    library(edgeR)
+    dge <- DGEList(counts=exp_com)
+    dge <- calcNormFactors(dge)
+    
+    v <- voom(dge,design, normalize="quantile") 
+    fit <- lmFit(v, design)
+    
+    constrasts = paste(rev(levels(Group_s)),collapse = "-")
+    cont.matrix <- makeContrasts(contrasts=constrasts,levels = design) 
+    fit2=contrasts.fit(fit,cont.matrix)
+    fit2=eBayes(fit2)
+    
+    deg[[n]]= topTable(fit2, coef=constrasts, n=Inf)
+    
+    names(deg)[[n]] <- paste0(comp[1],"Vs",comp[2])
+  }
+}
+
+rownames(exp)
+tr <- c()
+clus <- list()
+gene_id <- rownames(exp)
+for (i in 1:length(deg)){
+  te <- data.frame(Symbol=rownames(deg[[i]]),adj.P.Val=deg[[i]]$adj.P.Val)#te作为中介
+  colnames(te)[2] <- names(deg)[[i]]
+  clus[[i]] <- te[match(gene_id,te[,1]),]
+  names(clus)[[i]] <- names(deg)[[i]]
+  tr[i] <- identical(gene_id,clus[[i]][,1])
+}
+table(tr)
+deg_all <- bind_cols(clus) 
+rownames(deg_all) <- gene_id
+deg_all <- deg_all[,!str_detect(colnames(deg_all),"Symbol")]
+
+
+pan <- c()
+for (i in 1:length(rownames(deg_all))){
+  pan[i] <- sum(deg_all[i,]<0.05)>0
+}
+table(pan)
+deg_limma_ch <- deg_all[pan,]
+
+
+```
+
+
+## DEGs using edgeR
+
+``` {r eval = FALSE}
+
+exp <- filter_count51
+
+
+# test
+comp <- c( 'Day0' ,'Day3~5'）
+pd1_com <- pd1[pd1$group1 %in% comp,]#得到分组pd
+exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
+Group_t <- factor(pd1_com$group1,
+                  levels = comp) 
+
+dge <- DGEList(counts=exp_com,group=Group_t) 
+dge$samples$lib.size <- colSums(dge$counts)
+dge <- calcNormFactors(dge) 
+
+design <- model.matrix(~0+Group_t)
+rownames(design)<-colnames(dge)
+colnames(design)<-levels(Group_t)
+
+dge <- estimateGLMCommonDisp(dge, design)
+dge <- estimateGLMTrendedDisp(dge, design)
+dge <- estimateGLMTagwiseDisp(dge, design)
+
+fit <- glmFit(dge, design)
+fit2 <- glmLRT(fit, contrast=c(-1,1)) 
+
+DEG=topTags(fit2, n=nrow(exp))
+deg_t=as.data.frame(DEG) 
+
+
+
+# calculation
+id <- unique(pd1$group1)[order(unique(pd1$group1))]
+id
+deg <- list() 
+n <- 0
+for (i in 1:(length(id)-1)){
+  for(is in ((i+1):length(id))){
+    comp <- id[c(i,is)]
+    n <- n+1
+    pd1_com <- pd1[pd1$group1 %in% comp,]
+    exp_com <- exp[,match(pd1_com$ID,colnames(exp))] 
+    Group <- factor(pd1_com$group1,
+                    levels = comp) 
+    
+    dge <- DGEList(counts=exp_com,group=Group) 
+    dge$samples$lib.size <- colSums(dge$counts)
+    dge <- calcNormFactors(dge) 
+    
+    design <- model.matrix(~0+Group)
+    rownames(design)<-colnames(dge)
+    colnames(design)<-levels(Group)
+    
+    dge <- estimateGLMCommonDisp(dge, design)
+    dge <- estimateGLMTrendedDisp(dge, design)
+    dge <- estimateGLMTagwiseDisp(dge, design)
+    
+    fit <- glmFit(dge, design)
+    fit2 <- glmLRT(fit, contrast=c(-1,1)) 
+    
+    DEG=topTags(fit2, n=nrow(exp))
+    deg[[n]]=as.data.frame(DEG) 
+    
+    names(deg)[[n]] <- paste0(comp[1],"Vs",comp[2])
+  }
+}
+
+tr <- c()
+clus <- list()
+gene_id <- rownames(deg[[1]])
+
+for (i in 1:length(deg)){
+  te <- data.frame(Symbol=rownames(deg[[i]]),adj.P.Val=deg[[i]]$FDR)#te作为中介
+  colnames(te)[2] <- names(deg)[[i]]
+  clus[[i]] <- te[match(gene_id,te[,1]),]#以gene_id固定相同的顺序
+  names(clus)[[i]] <- names(deg)[[i]]
+  tr[i] <- identical(gene_id,clus[[i]][,1])
+}
+table(tr)
+deg_all <- bind_cols(clus) 
+rownames(deg_all) <- gene_id
+deg_all <- deg_all[,!str_detect(colnames(deg_all),"Symbol")]
+
+pan <- c()
+for (i in 1:length(rownames(deg_all))){
+  pan[i] <- sum(deg_all[i,]<0.05,na.rm = TRUE)>0
+}
+table(pan)
+deg_edgeR_ch <- deg_all[pan,]
+
+
+```
+
+
+## Mfuzz
+
+``` {r eval = FALSE}
+
+limma_sigGene <- rownames(deg_limma_ch)
+edgeR_sigGene <- rownames(deg_edgeR_ch)
+DESeq2_sigGene <- rownames(deg_deseq2_ch)
+
+data <- list(limma=limma_sigGene,
+             edgeR=edgeR_sigGene,
+             DESeq2=DESeq2_sigGene)
+
+library(VennDiagram)
+
+col <- c('#0099CC','#FF6666','#FFCC99')
+
+venn.diagram(data,
+             lwd=1,
+             lty=1,
+             col=col,
+             fill=col,
+             cat.col=col,
+             cat.cex = 1.8,
+             rotation.degree = 0,
+             cex=1.5,
+             alpha = 0.5,
+             reverse=TRUE,
+             width=4000,height = 4000,resolution =600,margin=0.2,
+             filename="d21_mfuzz/3DEG_venn.png",imagetype="png")
+
+
+sigGene3 = intersect(intersect(limma_sigGene,
+                               edgeR_sigGene),
+                     DESeq2_sigGene)
+
+
+eset <- new("ExpressionSet",exprs = DEGs_exp_averp)
+eset <- filter.std(eset,min.std=0) 
+eset <- standardise(eset)
+
+c <-8
+m <- mestimate(eset) 
+set.seed(123)
+cl <- mfuzz(eset, c = c, m = m) 
+
+cl$size
+sum(cl$size)
+
+gene2cluster <- data.frame(gene=names(cl$cluster),cluster=cl$cluster)
+
+head(cl$membership)
+O <- overlap(cl)
+Ptmp <-  overlap.plot(cl,over=O,thres=0.05)
+
+
+library(RColorBrewer)
+library(Mfuzz)
+color.2 <- colorRampPalette(rev(c("#ff0000", "Yellow", "OliveDrab1")))(1000)
+
+mfuzz.plot2(eset,cl,mfrow=c(2,4),new.window= FALSE,centre = TRUE,
+            time.labels=colnames(DEGs_exp_averp),colo = color.2)
+
+
+
+```
+
+
+## GSEA
+
+``` {r eval = FALSE}
+
+clus.logfc <- list() #log2fc
+for (i in 1:6) {
+  clus.logfc[[i]]<- deg[[i]]$log2FoldChange
+  names(clus.logfc[[i]]) <- rownames(deg[[i]])
+  names(clus.logfc)[i] <- names(deg)[i]
+}
+
+i = 1
+geneList <- clus.logfc[[i]]
+geneList <- sort(geneList, decreasing = T)
+egmt <- GSEA(geneList, TERM2GENE=geneset, verbose=T,pvalueCutoff = 1)
+
+
+```

@@ -1,0 +1,173 @@
+
+# scRNA-seq
+
+## Pre-processing
+
+``` {r eval = FALSE}
+
+# Pre-processing data was performed using cellranger
+cellranger count --id=${Sample_ID} \
+  --fastqs=${FASTQ} \
+  --sample=${Sample_ID} \
+  --transcriptome=${index_path}
+
+cellranger vdj --id={Sample_ID} \
+  --reference=${index_path} \
+  --fastqs=${FASTQ} \
+  --sample=${Sample_ID}
+
+
+
+```
+
+
+## Quaility control
+
+``` {r eval = FALSE}
+
+cart <- CreateSeuratObject(counts = cart.data, project = "cart", min.cells = 0, min.features = 0)
+cart[["percent.mt"]] <- PercentageFeatureSet(cart, pattern = "^MT-")
+cart
+summary(cart@meta.data$percent.mt)
+
+# Visualize QC metrics as a violin plot
+pdf(paste0(out.path, "/1.vlnplot.pdf"), width = 12, height = 7)
+VlnPlot(cart, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+dev.off()
+
+pdf(paste0(out.path, "/1.geneplot.pdf"), width = 12, height = 7)
+plot1 <- FeatureScatter(cart, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(cart, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+dev.off()
+
+cart <- subset(cart, subset = nFeature_RNA > 800 & percent.mt < 10)
+
+pdf(paste0(out.path, "/2.filter.vlnplot.pdf"), width = 12, height = 7)
+VlnPlot(cart, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+dev.off()
+
+pdf(paste0(out.path, "/2.filter.geneplot.pdf"), width = 12, height = 7)
+plot1 <- FeatureScatter(cart, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(cart, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+dev.off()
+
+cart <- NormalizeData(cart, normalization.method = "LogNormalize", scale.factor = 10000)
+cart <- FindVariableFeatures(cart, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(cart), 10)
+
+# plot variable features with and without labels
+pdf(paste0(out.path, "/3.VariableFeaturePlot.pdf"), width = 12, height = 7)
+plot1 <- VariableFeaturePlot(cart)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+dev.off()
+
+all.genes <- rownames(cart)
+cart <- ScaleData(cart, features = all.genes)
+cart <- RunPCA(cart, features = VariableFeatures(object = cart))
+
+p <- DimPlot(cart, reduction = "pca") + theme_few()
+ggsave(paste0(out.path, "/4.PCA.pdf"), p, width = 9, height = 7)
+
+
+################ Combat
+library(gmodels)
+
+typeof(cart@reductions$pca)
+
+cart <- FindVariableFeatures(cart, selection.method = "vst", nfeatures = 3000)
+cart <- ScaleData(cart)
+
+dim(cart@assays$RNA@scale.data)
+
+exp.mat <- cart@assays$RNA@scale.data
+batch <- as.numeric(as.factor(cart@meta.data$Sample))
+dim(exp.mat)
+
+exp.sva <- ComBat(dat=exp.mat, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+sva.pca <- fast.prcomp( exp.sva, retx = TRUE, scale. = TRUE)
+sva.pca <- sva.pca$rotation[, 1:50]
+colnames(sva.pca) <- paste0("PC_", 1:50)
+
+cart@reductions$svapca <- cart@reductions$pca
+cart@reductions$svapca@cell.embeddings <- sva.pca
+
+cart <- FindNeighbors(cart, reduction = "svapca", dims = 1:20)
+cart <- FindClusters(cart, resolution = 1)
+cart <- RunTSNE(cart, reduction = "svapca", dims = 1:20, perplexity = 50)
+cart <- RunUMAP(cart, reduction = "svapca", dims = 1:20)
+
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5, 
+             cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.cluster.pdf"), p, width = 9, height = 7)
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5, label = TRUE, label.size = 10,
+             cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.cluster.label.pdf"), p, width = 9, height = 7)
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5,
+             group.by = "Sample", cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.sample.pdf"), p, width = 9, height = 7)
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5,
+             group.by = "Sample", split.by = "Sample", ncol = 2, cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.sample.split.pdf"), p, width = 14, height = 12)
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5,
+             group.by = "Day", cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.Day.pdf"), p, width = 9, height = 7)
+
+p <- DimPlot(cart, reduction = "umap", pt.size = 0.5,
+             group.by = "Day", split.by = "Day", cols = color.lib) + theme_few()
+ggsave(paste0(out.path, "/5.UMAP.Day.split.pdf"), p, width = 12, height = 7)
+
+
+```
+
+
+## Annotation
+
+``` {r eval = FALSE}
+
+####################### SingleR annotation
+ref <- readRDS(file = "hs.BlueprintEncodeData.RDS")
+pred.BlueprintEncodeData <- SingleR(test = cart@assays$RNA@data, ref = ref, labels = ref$label.main)
+
+ref <- readRDS(file = "hs.HumanPrimaryCellAtlasData.RDS")
+pred.HumanPrimaryCellAtlasData <- SingleR(test = cart@assays$RNA@data, ref = ref, labels = ref$label.main)
+
+ref <- readRDS(file = "ImmGenData.RDS")
+pred.ImmGenData <- SingleR(test = cart@assays$RNA@data, ref = ref, labels = ref$label.main)
+
+ref <- readRDS(file = "MonacoImmuneData.RDS")
+pred.MonacoImmuneData <- SingleR(test = cart@assays$RNA@data, ref = ref, labels = ref$label.main)
+
+ref <- readRDS(file = "NovershternHematopoieticData.RDS")
+pred.NovershternHematopoieticData <- SingleR(test = cart@assays$RNA@data, ref = ref, labels = ref$label.main)
+
+
+```
+
+## Markers
+
+``` {r eval = FALSE}
+
+x = 1
+markers <- Seurat::FindMarkers(cart, ident.1 = x)
+
+
+```
+
+
+
+
+
+
+
+
