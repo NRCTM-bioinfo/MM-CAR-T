@@ -127,4 +127,77 @@ p
 ```
 
 
+## CONNECTOR 
+
+``` {r eval = FALSE, fig.width = 10, fig.height = 8}
+
+library(connector)
+library(ggthemes)
+library(ggplot2)
+
+CONNECTORList <- DataImport(TimeSeriesFile = "data/TimeSeriesFile.xlsx",
+                            AnnotationFile = "data/AnnotationFile.txt")
+CurvesPlot <- PlotTimeSeries(data = CONNECTORList,
+                             feature = "Progeny_1") + theme_base()
+
+Datavisual <- DataVisualization(data = CONNECTORList,
+                                feature = "Progeny_1", 
+                                labels = c("Time","CRS","CRS grade"))
+
+trCONNECTORList <- DataTruncation(data = CONNECTORList,
+                                  feature="Progeny_1",
+                                  truncTime = 15,
+                                  labels = c("Time","CRS","CRS grade") )
+trCONNECTORList$PlotTimeSeries_plot
+
+CrossLogLike <- BasisDimension.Choice(data = trCONNECTORList,
+                                      p = 2:5 )
+
+ClusteringList <- ClusterAnalysis(data = trCONNECTORList,
+                                  G = 2:4,
+                                  p = 2,
+                                  runs = 1000)
+str(ClusteringList, max.level = 2, vec.len = 1)
+IndexesPlot.Extrapolation(ClusteringList) -> indexes
+indexes$Plot
+
+
+#ClusteringList$Clusters.List$G2$ClusterAll[[1]]$FCM$cluster$ClustCurve
+a <- ClusteringList$Clusters.List$G2$ClusterAll[[1]]$FCM$cluster$ClustCurve
+table(a$Cluster[which(a$Time == 0)])
+
+#ClusteringList$Clusters.List$G3$ClusterAll[[1]]$FCM$cluster$ClustCurve
+a <- ClusteringList$Clusters.List$G3$ClusterAll[[1]]$FCM$cluster$ClustCurve
+table(a$Cluster[which(a$Time == 0)])
+
+a <- ClusteringList$Clusters.List$G4$ClusterAll[[1]]$FCM$cluster$ClustCurve
+table(a$Cluster[which(a$Time == 0)])
+
+
+ConsMatrix <- ConsMatrix.Extrapolation(stability.list = ClusteringList)
+ConsMatrix$G2$ConsensusPlot + scale_fill_gradientn(colours = c("#00599F","#62aee5", "white", "#db1b18", "#b50600", "#b50600"), na.value = NA)
+
+ConsMatrix$G3$ConsensusPlot + scale_fill_gradientn(colours = c("#00599F","#62aee5", "white", "#db1b18", "#b50600", "#b50600"), na.value = NA)
+
+ConsMatrix$G4$ConsensusPlot + scale_fill_gradientn(colours = c("#00599F","#62aee5", "white", "#db1b18", "#b50600", "#b50600"), na.value = NA)
+
+CONNECTORList.FCM.opt <- MostProbableClustering.Extrapolation(
+  stability.list = ClusteringList,
+  G = 2 )
+FCMplots <- ClusterWithMeanCurve(clusterdata = CONNECTORList.FCM.opt,
+                                feature = "Progeny_1",
+                                labels = c("Time","Volume"),
+                                title = "FCM model")
+
+NumberSamples <- CountingSamples(clusterdata = CONNECTORList.FCM.opt,
+                               feature = "Progeny_1")
+
+DiscrPlt <- DiscriminantPlot(clusterdata = CONNECTORList.FCM.opt,
+                           feature = "Progeny_1")
+
+
+
+
+
+```
 
